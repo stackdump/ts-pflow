@@ -1,9 +1,19 @@
-
 type NodeType = {
     place?: Place,
     transition?: Transition,
 }
 
+
+// Domain Specific Language (DSL) validation errors
+export const ErrorBadInhibitorSource: Error = new Error("inhibitor source must be a place")
+export const ErrorBadInhibitorTarget: Error = new Error("inhibitor target must be a transitions")
+export const ErrorBadArcWeight: Error = new Error("arc weight must be positive int")
+export const ErrorBadArcTransition: Error = new Error("source and target are both transitions")
+export const ErrorBadArcPlace: Error = new Error("source and target are both places")
+export const ErrorBadGuardSource: Error = new Error("guards can only be applied to a transition")
+
+// The term 'Node' here refers to the nodes of a digraph
+// https://en.wikipedia.org/wiki/Directed_graph
 class Node {
     private node: NodeType;
 
@@ -29,10 +39,10 @@ class Node {
 
     inhibit($: number, target: Node) {
         if (!this.isPlace()) {
-            throw new Error("inhibitor source must be a place")
+            throw ErrorBadInhibitorSource
         }
         if (!target.isTransition()) {
-            throw new Error("inhibitor target must be a transitions")
+            throw ErrorBadInhibitorTarget
         }
         // TODO: actually add the inhibitor
         return this
@@ -40,13 +50,13 @@ class Node {
 
     arc($: number, target: Node) {
         if ($ <= 0) {
-            throw new Error("arc weight must be positive int")
+            throw ErrorBadArcWeight
         }
         if (this.isPlace() && target.isPlace()) {
-            throw new Error("source and target are both places")
+            throw ErrorBadArcPlace
         }
         if (this.isTransition() && target.isTransition()) {
-            throw new Error("source and target are both transitions")
+            throw ErrorBadArcTransition
         }
         // TODO: actually add the arc
         return this
@@ -56,7 +66,7 @@ class Node {
     // would this be a typescript interface
     guard(def: Role) {
         if (! this.isTransition()) {
-            throw new Error("guards can only be applied to a transition")
+            throw ErrorBadGuardSource
         }
         // TODO: add callback checks
         return this
@@ -64,11 +74,19 @@ class Node {
 
 }
 
+type Net = {
+    schema: string
+    roles: Map<string, number>
+    places: Map<string, Place>
+    transitions: Map<string, Transition>
+}
+
 export class Pflow {
-    private net: any;
+    private net: Net; // store pflow data
 
     constructor() {
         this.net = {
+            schema: "",
             roles: new Map<string, number>(),
             places: new Map<string, Place>(),
             transitions: new Map<string, Transition>(),
@@ -84,76 +102,48 @@ export class Pflow {
     }
 
     place(def: Place) {
-        this.net.places[def.label] = def
-        // REVIEW: add DSL helpers
+        def.offset = this.net.places.size
+        this.net.places.set(def.label, def)
         return new Node({place: def})
     }
 
     transition(def: Transition) {
-        this.net.transitions[def.label] = def
+        this.net.transitions.set(def.label, def)
         return new Node({transition: def})
+    }
+
+    empty_vector(): Array<number> {
+        let out: Array<number> = []
+        this.net.places.forEach( () => { out.push(0) })
+        return out
+    }
+
+    initial_state(): Array<number> {
+        let out: Array<number> = []
+        this.net.places.forEach((pl: Place, key: string) => {
+            out[pl.offset] = pl.initial
+        })
+        return out
     }
 }
 
 export type Role = {
-    label: string,
+    label: string
 }
 
-export type Action = {
-    action: string,
-    multiple: number,
-}
-export type Command = {
-    id: string,
-    schema: string,
-    chain: string,
-    action: Array<Action>,
-    state: Array<number>,
-}
-export type State = {
-    id: string,
-    schema: string,
-    chain: string,
-    state: Array<number>,
-    head: string,
-    //created?: Timestamp,
-    //updated?: google_protobuf_timestamp_pb.Timestamp.AsObject,
-}
-export type EventStatus = {
-    state: State,
-    code: number,
-    message: string,
-}
-export type Event = {
-    id: string,
-    schema: string,
-    chain: string,
-    action: Array<Action>,
-    //payload: Any, REVIEW: how do you do this?
-    state: Array<number>,
-    uuid: string,
-    parent: string,
-}
 export type Guard = {
-    label: string,
-    delta: Array<number>,
+    label: string
+    delta: Array<number>
 }
 export type Transition = {
-    label: string,
-    role?: Role,
-    delta?: Array<number>,
-    guards?: Array<[string, Guard]>,
+    label: string
+    role?: Role
+    delta?: Array<number>
+    guards?: Array<[string, Guard]>
 }
 export type Place = {
-    label: string,
-    offset?: number,
-    initial?: number,
-    capacity?: number,
-}
-
-export type Machine = {
-    schema: string,
-    initial: Array<number>,
-    capacity: Array<number>,
-    transitions: Array<[string, Transition]>,
+    label: string
+    offset?: number
+    initial?: number
+    capacity?: number
 }
