@@ -4,36 +4,41 @@ type NodeType = {
 }
 
 
-// Domain Specific Language (DSL) validation errors
+// Domain Specific Language (DSL) model definition errors
 export const ErrorBadInhibitorSource: Error = new Error("inhibitor source must be a place")
 export const ErrorBadInhibitorTarget: Error = new Error("inhibitor target must be a transitions")
 export const ErrorBadArcWeight: Error = new Error("arc weight must be positive int")
 export const ErrorBadArcTransition: Error = new Error("source and target are both transitions")
 export const ErrorBadArcPlace: Error = new Error("source and target are both places")
-export const ErrorBadGuardSource: Error = new Error("guards can only be applied to a transition")
+export const ErrorFrozenModel: Error = new Error("model cannot be updated after it is frozen")
+export const ErrorInvalidAction: Error = new Error("invalid action")
+export const ErrorInvalidOutput: Error = new Error("output cannot be negative")
+export const ErrorExceedsCapacity: Error = new Error("output exceeds capacity")
 
 // The term 'Node' here refers to the nodes of a digraph
 // https://en.wikipedia.org/wiki/Directed_graph
 class Node {
-    private node: NodeType;
+    public node: NodeType
+    private pflow: Pflow // parent relation
 
-    constructor(def: any) {
+    constructor(def: any, pflow: Pflow) {
+        this.pflow = pflow
         this.node = def
     }
 
     isPlace(): boolean {
         if ( this.node.place ) {
-            return true;
+            return true
         } else {
-            return false;
+            return false
         }
     }
 
     isTransition(): boolean {
         if ( this.node.transition ) {
-            return true;
+            return true
         } else {
-            return false;
+            return false
         }
     }
 
@@ -44,7 +49,7 @@ class Node {
         if (!target.isTransition()) {
             throw ErrorBadInhibitorTarget
         }
-        // TODO: actually add the inhibitor
+        this.pflow.edges.push({source: this, target: target, weight: $, inhibitor: true})
         return this
     }
 
@@ -58,17 +63,7 @@ class Node {
         if (this.isTransition() && target.isTransition()) {
             throw ErrorBadArcTransition
         }
-        // TODO: actually add the arc
-        return this
-    }
-
-    // TODO: should we allow for a callback here?
-    // would this be a typescript interface
-    guard(def: Role) {
-        if (! this.isTransition()) {
-            throw ErrorBadGuardSource
-        }
-        // TODO: add callback checks
+        this.pflow.edges.push({source: this, target: target, weight: $})
         return this
     }
 
@@ -76,57 +71,146 @@ class Node {
 
 type Net = {
     schema: string
-    roles: Map<string, number>
+    roles: Map<string, Role>
     places: Map<string, Place>
     transitions: Map<string, Transition>
 }
 
 export class Pflow {
-    private net: Net; // store pflow data
+    private net: Net // store pflow data
+    private frozen: boolean // indicate model is finalized
+    public edges: Array<Edge>
 
-    constructor() {
+    constructor(schema: string) {
+        this.frozen = false
+        this.edges = new Array<Edge>()
         this.net = {
-            schema: "",
-            roles: new Map<string, number>(),
+            schema: schema,
+            roles: new Map<string, Role>(),
             places: new Map<string, Place>(),
             transitions: new Map<string, Transition>(),
-        };
+        }
     }
 
-    schema(name: string) {
-        this.net.schema = name;
+    actions(): Array<string> {
+        const out = new Array<string>()
+        this.net.transitions.forEach((_, key) => {
+            out.push(key)
+        })
+        return out
+    }
+
+    assertNotFrozen() {
+        if (this.frozen) { throw ErrorFrozenModel }
+    }
+
+    freeze() {
+        this.reindexVASS(true)
+    }
+
+    reindexVASS(freeze?: boolean) {
+        this.frozen = (freeze == true)
+        this.net.transitions.forEach((txn: Transition, key: string) => {
+            txn.delta = this.emptyVector()
+        })
+        this.edges.forEach((edge: Edge) => {
+            if (edge.inhibitor) {
+                //delta[edge.source.node.place.offset] = 0-edge.weight
+            } else {
+                if (edge.source.isPlace()) {
+                    edge.target.node.transition.delta[edge.source.node.place.offset] = 0-edge.weight
+                } else {
+                    edge.source.node.transition.delta[edge.target.node.place.offset] = edge.weight
+                }
+            }
+        })
+        // FIXME will need to keep index of arcs
+        // * install guards & inhibitors
     }
 
     role(def: string): Role {
-        return {label: def}
+        this.assertNotFrozen()
+        const r: Role = {label: def}
+        this.net.roles.set(def, r)
+        return r
     }
 
-    place(def: Place) {
+    place(def: Place): Node {
+        this.assertNotFrozen()
         def.offset = this.net.places.size
         this.net.places.set(def.label, def)
-        return new Node({place: def})
+        return new Node({place: def}, this)
     }
 
-    transition(def: Transition) {
+    transition(def: Transition): Node {
+        this.assertNotFrozen()
+        def.guards = new Map<string,Guard>()
         this.net.transitions.set(def.label, def)
-        return new Node({transition: def})
+        return new Node({transition: def}, this)
     }
 
-    empty_vector(): Array<number> {
-        let out: Array<number> = []
+    emptyVector(): Array<number> {
+        const out: Array<number> = []
         this.net.places.forEach( () => { out.push(0) })
         return out
     }
 
-    initial_state(): Array<number> {
-        let out: Array<number> = []
+    initialState(): Array<number> {
+        const out: Array<number> = []
         this.net.places.forEach((pl: Place, key: string) => {
             out[pl.offset] = pl.initial
         })
         return out
     }
+
+    stateCapacity(): Array<number> {
+        const out: Array<number> = []
+        this.net.places.forEach((pl: Place, key: string) => {
+            out[pl.offset] = pl.capacity
+        })
+        return out
+    }
+
+    offset(place: string): number {
+        return this.net.places.get(place).offset
+    }
+
+    execute(inputState: Array<number>, transaction: string, multiplier: number): [Error, Array<number>, Role] {
+        const [delta, role] = this.action(transaction)
+        const [err, out] = this.add(inputState, delta, multiplier, this.stateCapacity())
+        // TODO: enforce guards
+
+        return [err, out, role]
+    }
+
+    /* Multiplier & Capacity args are optional */
+    add(state: Array<number>, delta: Array<number>, multiplier: number, capacity: Array<number>): [Error, Array<number>] {
+        let err = null
+        const out = this.emptyVector()
+        state.forEach((value, index) => {
+            const sum = value + delta[index] * multiplier
+            if (sum < 0) {
+                err = ErrorInvalidOutput
+            }
+            if ((capacity && (capacity[index] > 0 && sum > capacity[index]))) {
+                err = ErrorExceedsCapacity
+            }
+            out[index] = sum
+        });
+        return [err, out]
+    }
+
+    action(transition: string): [Array<number>, Role] {
+        try{
+            const tx = this.net.transitions.get(transition)
+            return [tx.delta, tx.role]
+        } catch {
+            throw ErrorInvalidAction
+        }
+    }
 }
 
+// REVIEW: do we need to export all types ?
 export type Role = {
     label: string
 }
@@ -135,15 +219,24 @@ export type Guard = {
     label: string
     delta: Array<number>
 }
+
 export type Transition = {
     label: string
     role?: Role
     delta?: Array<number>
-    guards?: Array<[string, Guard]>
+    guards?: Map<string, Guard>
 }
+
 export type Place = {
     label: string
     offset?: number
     initial?: number
     capacity?: number
+}
+
+export type Edge = {
+    source: Node
+    target: Node
+    weight: number
+    inhibitor?: boolean
 }

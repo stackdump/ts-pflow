@@ -1,28 +1,42 @@
-import { expect } from "chai";
+import { expect } from "chai"
 import {
-    ErrorBadArcPlace, ErrorBadArcTransition,
-    ErrorBadArcWeight, ErrorBadGuardSource,
+    ErrorBadArcPlace,
+    ErrorBadArcTransition,
+    ErrorBadArcWeight,
     ErrorBadInhibitorSource,
     ErrorBadInhibitorTarget,
+    ErrorExceedsCapacity,
+    ErrorInvalidAction,
     Pflow
 } from "../src/pflow"
 
-let p = new Pflow() // keep a short varname for convenience
-p.schema('counter')
-let user = p.role("testUser")
-let p00 = p.place({ label: '00', initial: 1 })
-let p01 = p.place({ label: '01', initial: 1 })
-let p02 = p.place({ label: '02', initial: 1 })
+/* test drive all parts of the DSL */
+const p = new Pflow('counter')
+const user = p.role("testUser")
+const p00 = p.place({ label: '00', initial: 1 , capacity: 1})
+const p01 = p.place({ label: '01', initial: 1 })
+const p02 = p.place({ label: '02', initial: 1 })
 
-let x00 = p.transition({ label: 'x00'})
+const x00 = p.transition({ label: 'x00', role: user})
+p.transition({ label: 'x01'}).arc(2, p00)
 p02.inhibit(1, x00)
+p.reindexVASS()
 
 describe("Pflow",()=> {
     it("should construct Vector Addition System w/ State (VASS)",() => {
         expect(p00.isTransition()).to.be.false
         expect(p00.isPlace()).to.be.true
-        expect(p.initial_state()).to.eql([1,1,1])
-        expect(p.empty_vector()).to.eql([0,0,0])
+        expect(p.initialState()).to.eql([1,1,1])
+        expect(p.emptyVector()).to.eql([0,0,0])
+    })
+    it("should validate actions", () => {
+        const [err] = p.execute([1,1,1],'x01', 1)
+        expect(err).to.eql(ErrorExceedsCapacity)
+    })
+    it("should validate action declarations", () => {
+        expect(() => {
+            p.action('badAction')
+        }).to.throw(ErrorInvalidAction)
     })
     it("should prohibit invalid DSL usage", () => {
         expect(() => {
@@ -44,9 +58,5 @@ describe("Pflow",()=> {
         expect(() => {
             x00.arc(1, x00)
         }).to.throw(ErrorBadArcTransition)
-
-        expect(() => {
-            p00.guard(user)
-        }).to.throw(ErrorBadGuardSource)
     })
 })
