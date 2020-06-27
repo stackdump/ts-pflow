@@ -1,7 +1,7 @@
 import { expect } from "chai"
 import { Octoe} from "./octoe"
 import { Model } from "./octoe.pflow"
-import {ErrorFrozenModel, ErrorInvalidOutput} from "../src/pflow"
+import { ErrorFrozenModel, ErrorInvalidOutput } from "../src/pflow"
 
 describe("Octoe", () => {
     it("should be able to play tic-tac-toe", () => {
@@ -53,12 +53,14 @@ describe("Octoe", () => {
         expect(game.isOver()).to.be.false
         play('o22')
         expect(game.hasWinner()[1]).to.eql(game.player_o)
-
     })
 
     it("should allow user to provide input state", () => {
-        const game = new Octoe(Model.initialState())
-        // TODO: add better test of state
+        const inState = Model.initialState()
+        inState[Model.offset('11')] = 0 // remove middle space
+        const game = new Octoe(inState)
+        expect(game.availableMoves(game.player_x)).to.not.include('x11')
+        expect(game.availableMoves(game.player_x)).to.include('x00')
     })
 
     it("should not allow a frozen model to be altered", () => {

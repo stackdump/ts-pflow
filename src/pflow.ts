@@ -3,7 +3,6 @@ type NodeType = {
     transition?: Transition,
 }
 
-
 // Domain Specific Language (DSL) model definition errors
 export const ErrorBadInhibitorSource: Error = new Error("inhibitor source must be a place")
 export const ErrorBadInhibitorTarget: Error = new Error("inhibitor target must be a transitions")
@@ -11,9 +10,12 @@ export const ErrorBadArcWeight: Error = new Error("arc weight must be positive i
 export const ErrorBadArcTransition: Error = new Error("source and target are both transitions")
 export const ErrorBadArcPlace: Error = new Error("source and target are both places")
 export const ErrorFrozenModel: Error = new Error("model cannot be updated after it is frozen")
+
+// State machine execution errors
 export const ErrorInvalidAction: Error = new Error("invalid action")
 export const ErrorInvalidOutput: Error = new Error("output cannot be negative")
 export const ErrorExceedsCapacity: Error = new Error("output exceeds capacity")
+export const ErrorGuardCheckFailure: Error = new Error("guard condition failure")
 
 // The term 'Node' here refers to the nodes of a digraph
 // https://en.wikipedia.org/wiki/Directed_graph
@@ -27,19 +29,11 @@ class Node {
     }
 
     isPlace(): boolean {
-        if ( this.node.place ) {
-            return true
-        } else {
-            return false
-        }
+        return !!this.node.place
     }
 
     isTransition(): boolean {
-        if ( this.node.transition ) {
-            return true
-        } else {
-            return false
-        }
+        return !!this.node.transition
     }
 
     inhibit($: number, target: Node) {
@@ -49,7 +43,7 @@ class Node {
         if (!target.isTransition()) {
             throw ErrorBadInhibitorTarget
         }
-        this.pflow.edges.push({source: this, target: target, weight: $, inhibitor: true})
+        this.pflow.edge({source: this, target: target, weight: $, inhibitor: true})
         return this
     }
 
@@ -63,7 +57,7 @@ class Node {
         if (this.isTransition() && target.isTransition()) {
             throw ErrorBadArcTransition
         }
-        this.pflow.edges.push({source: this, target: target, weight: $})
+        this.pflow.edge({source: this, target: target, weight: $})
         return this
     }
 
@@ -79,7 +73,7 @@ type Net = {
 export class Pflow {
     private net: Net // store pflow data
     private frozen: boolean // indicate model is finalized
-    public edges: Array<Edge>
+    private edges: Array<Edge>
 
     constructor(schema: string) {
         this.frozen = false
@@ -110,12 +104,17 @@ export class Pflow {
 
     reindexVASS(freeze?: boolean) {
         this.frozen = (freeze == true)
-        this.net.transitions.forEach((txn: Transition, key: string) => {
+        this.net.transitions.forEach((txn: Transition) => {
             txn.delta = this.emptyVector()
         })
         this.edges.forEach((edge: Edge) => {
             if (edge.inhibitor) {
-                //delta[edge.source.node.place.offset] = 0-edge.weight
+                const g: Guard = {
+                    label: edge.source.node.place.label,
+                    delta: this.emptyVector(),
+                }
+                g.delta[edge.source.node.place.offset] = 0-edge.weight
+                edge.target.node.transition.guards.set(edge.source.node.place.label, g)
             } else {
                 if (edge.source.isPlace()) {
                     edge.target.node.transition.delta[edge.source.node.place.offset] = 0-edge.weight
@@ -157,7 +156,7 @@ export class Pflow {
 
     initialState(): Array<number> {
         const out: Array<number> = []
-        this.net.places.forEach((pl: Place, key: string) => {
+        this.net.places.forEach((pl: Place) => {
             out[pl.offset] = pl.initial
         })
         return out
@@ -165,7 +164,7 @@ export class Pflow {
 
     stateCapacity(): Array<number> {
         const out: Array<number> = []
-        this.net.places.forEach((pl: Place, key: string) => {
+        this.net.places.forEach((pl: Place) => {
             out[pl.offset] = pl.capacity
         })
         return out
@@ -176,10 +175,14 @@ export class Pflow {
     }
 
     execute(inputState: Array<number>, transaction: string, multiplier: number): [Error, Array<number>, Role] {
-        const [delta, role] = this.action(transaction)
+        const [delta, role, guards] = this.action(transaction)
+        for( const [, guard] of guards) {
+            const [check, out] = this.add(inputState, guard.delta, 1, this.emptyVector())
+            if (check == null) {
+                return [ErrorGuardCheckFailure, out, role]
+            }
+        }
         const [err, out] = this.add(inputState, delta, multiplier, this.stateCapacity())
-        // TODO: enforce guards
-
         return [err, out, role]
     }
 
@@ -196,45 +199,48 @@ export class Pflow {
                 err = ErrorExceedsCapacity
             }
             out[index] = sum
-        });
+        })
         return [err, out]
     }
 
-    action(transition: string): [Array<number>, Role] {
+    action(transition: string): [Array<number>, Role, Map<string, Guard>] {
         try{
             const tx = this.net.transitions.get(transition)
-            return [tx.delta, tx.role]
+            return [tx.delta, tx.role, tx.guards]
         } catch {
             throw ErrorInvalidAction
         }
     }
+
+    edge(def: Edge) {
+        this.edges.push(def)
+    }
 }
 
-// REVIEW: do we need to export all types ?
 export type Role = {
     label: string
 }
 
-export type Guard = {
+type Guard = {
     label: string
     delta: Array<number>
 }
 
-export type Transition = {
+type Transition = {
     label: string
     role?: Role
     delta?: Array<number>
     guards?: Map<string, Guard>
 }
 
-export type Place = {
+type Place = {
     label: string
     offset?: number
     initial?: number
     capacity?: number
 }
 
-export type Edge = {
+type Edge = {
     source: Node
     target: Node
     weight: number

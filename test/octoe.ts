@@ -1,5 +1,5 @@
 import {Model, player_o, player_x} from "./octoe.pflow"
-import {Role, Transition} from "../src/pflow"
+import {Role} from "../src/pflow"
 
 type Event = {
     role: Role,
