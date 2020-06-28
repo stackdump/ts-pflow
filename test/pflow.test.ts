@@ -17,9 +17,11 @@ const p00 = p.place({ label: '00', initial: 1 , capacity: 1})
 const p01 = p.place({ label: '01', initial: 1 })
 const p02 = p.place({ label: '02', initial: 1 })
 const p03 = p.place({ label: '03', initial: 0 })
+const p04 = p.place({ label: '04', initial: 1 , capacity: 1})
 
 const x00 = p.transition({ label: 'x00', role: user})
 const x01 = p.transition({ label: 'x01'}).arc(2, p00)
+const x02 = p.transition({ label: 'x02'}).arc(1, p04)
 p02.inhibit(1, x00)
 p03.inhibit(1, x01)
 p.reindexVASS()
@@ -28,15 +30,16 @@ describe("Pflow",()=> {
     it("should construct Vector Addition System w/ State (VASS)",() => {
         expect(p00.isTransition()).to.be.false
         expect(p00.isPlace()).to.be.true
-        expect(p.initialState()).to.eql([1,1,1])
-        expect(p.emptyVector()).to.eql([0,0,0])
+        expect(p.initialState()).to.eql([1,1,1,0,1])
+        expect(p.emptyVector()).to.eql([0,0,0,0,0])
     })
     it("should inhibit actions when guards fail", () => {
-        const [err] = p.execute([1,1,1],'x00', 1)
+        const [err] = p.execute(p.initialState(),'x00', 1)
         expect(err).to.eql(ErrorGuardCheckFailure)
     })
     it("should validate actions", () => {
-        const [err] = p.execute([1,1,1],'x01', 1)
+        // FIXME remove guard
+        const [err] = p.execute(p.initialState(),'x02', 1)
         expect(err).to.eql(ErrorExceedsCapacity)
     })
     it("should validate action declarations", () => {
